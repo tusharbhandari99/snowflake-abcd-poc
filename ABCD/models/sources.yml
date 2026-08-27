@@ -1,0 +1,8 @@
+version: 2
+
+sources:
+  - name: bronze
+    database: ABCD_POC_DB
+    schema: ABCD_BRONZE
+    tables:
+      - name: RAW_SAMPLE_INGEST

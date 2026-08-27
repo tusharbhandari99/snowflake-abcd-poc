@@ -1,0 +1,10 @@
+ABCD:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      role: ACCOUNTADMIN
+      warehouse: W_TRANSFORM_POC
+      database: ABCD_POC_DB
+      schema: ABCD_MARTS
+      threads: 8

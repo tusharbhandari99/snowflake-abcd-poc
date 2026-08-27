@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: fct_sample_event
+    description: "Accessioning events and turnaround time fact table"
+    columns:
+      - name: event_id
+        tests:
+          - unique
+          - not_null
+      - name: qc_status
+        tests:
+          - accepted_values:
+              values: ['PASS', 'FAIL', 'FLAGGED']
+      - name: turnaround_time_minutes
+        tests:
+          - not_null

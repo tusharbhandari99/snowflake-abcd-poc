@@ -19,7 +19,7 @@ env:
   SNOWFLAKE_ROLE: ACCOUNTADMIN
   SNOWFLAKE_DATABASE: ABCD_POC_DB
   SNOWFLAKE_WAREHOUSE: W_TRANSFORM_POC
-  DBT_PROFILES_DIR: .
+  DBT_PROFILES_DIR: ABCD
 
 jobs:
   # ====================================================================
@@ -27,46 +27,48 @@ jobs:
   # Purpose: Compile code and run tests to catch errors BEFORE merging.
   # ====================================================================
   ci-validation:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code from GitHub
-        uses: actions/checkout@v4
-
-      - name: Set up Python Environment
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install dbt-snowflake Adapter
-        run: pip install dbt-snowflake
-
-      - name: Validate SQL and Test Data Quality
-        run: |
-          dbt deps
-          dbt compile
-          dbt test
-
+      if: github.event_name == 'pull_request'
+      runs-on: ubuntu-latest
+      steps:
+        - name: Checkout Code from GitHub
+          uses: actions/checkout@v4
+  
+        - name: Set up Python Environment
+          uses: actions/setup-python@v5
+          with:
+            python-version: '3.10'
+  
+        - name: Install dbt-snowflake Adapter
+          run: pip install dbt-snowflake
+  
+        - name: Validate SQL and Test Data Quality
+          run: |
+            cd ABCD
+            dbt deps
+            dbt compile
+            dbt test
+            
   # ====================================================================
   # JOB 2: CD DEPLOYMENT (Runs ONLY on Merge to Main)
   # Purpose: Build/update tables and views in Snowflake automatically.
   # ====================================================================
   cd-deployment:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code from GitHub
-        uses: actions/checkout@v4
-
-      - name: Set up Python Environment
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install dbt-snowflake Adapter
-        run: pip install dbt-snowflake
-
-      - name: Run dbt Build (Transform & Deploy)
-        run: |
-          dbt deps
-          dbt build
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      runs-on: ubuntu-latest
+      steps:
+        - name: Checkout Code from GitHub
+          uses: actions/checkout@v4
+  
+        - name: Set up Python Environment
+          uses: actions/setup-python@v5
+          with:
+            python-version: '3.10'
+  
+        - name: Install dbt-snowflake Adapter
+          run: pip install dbt-snowflake
+  
+        - name: Run dbt Build (Transform & Deploy)
+          run: |
+            cd ABCD
+            dbt deps
+            dbt build

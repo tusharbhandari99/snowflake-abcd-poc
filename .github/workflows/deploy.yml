@@ -10,18 +10,20 @@ env:
   SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
   SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
   SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
-  SNOWFLAKE_ROLE: ACCOUNTADMIN
   SNOWFLAKE_DATABASE: ABCD_POC_DB
   SNOWFLAKE_WAREHOUSE: W_TRANSFORM_POC
   DBT_PROFILES_DIR: .
 
 jobs:
   # ====================================================================
-  # JOB 1: CI VALIDATION (Runs on Pull Requests)
+  # JOB 1: CI VALIDATION (Runs on Pull Requests in Sandbox)
   # ====================================================================
   ci-validation:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      DBT_TARGET: dev
+      SNOWFLAKE_ROLE: DBT_DEVELOPER_ROLE
     defaults:
       run:
         working-directory: ABCD
@@ -37,18 +39,21 @@ jobs:
       - name: Install dbt-snowflake Adapter
         run: pip install dbt-snowflake
 
-      - name: Validate SQL and Test Data Quality
+      - name: Validate SQL and Test Data Quality in Sandbox
         run: |
           dbt deps
-          dbt compile
-          dbt test
+          dbt compile --target dev
+          dbt test --target dev
 
   # ====================================================================
-  # JOB 2: CD DEPLOYMENT (Runs on Merge to Main)
+  # JOB 2: CD DEPLOYMENT (Runs on Merge to Main in Production)
   # ====================================================================
   cd-deployment:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    env:
+      DBT_TARGET: prod
+      SNOWFLAKE_ROLE: DBT_CICD_PROD_ROLE
     defaults:
       run:
         working-directory: ABCD
@@ -64,7 +69,7 @@ jobs:
       - name: Install dbt-snowflake Adapter
         run: pip install dbt-snowflake
 
-      - name: Run dbt Build (Transform & Deploy)
+      - name: Run Production dbt Build (Transform & Deploy)
         run: |
           dbt deps
-          dbt build
+          dbt build --target prod

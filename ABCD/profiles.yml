@@ -3,8 +3,12 @@ ABCD:
   outputs:
     dev:
       type: snowflake
-      role: ACCOUNTADMIN
-      warehouse: W_TRANSFORM_POC
-      database: ABCD_POC_DB
-      schema: ABCD_MARTS
-      threads: 8
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'ACCOUNTADMIN') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'ABCD_POC_DB') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'W_TRANSFORM_POC') }}"
+      schema: ABCD_SILVER
+      threads: 4
+      client_session_keep_alive: False

@@ -1,17 +1,11 @@
 name: Snowflake dbt CI-CD Pipeline
 
-# ----------------------------------------------------------------------
-# 1. TRIGGERS: When should this pipeline run?
-# ----------------------------------------------------------------------
 on:
   pull_request:
-    branches: [ main ]  # Runs CI checks whenever a PR is created against main
+    branches: [ main ]
   push:
-    branches: [ main ]  # Runs CD deployment whenever code is merged into main
+    branches: [ main ]
 
-# ----------------------------------------------------------------------
-# 2. ENVIRONMENT VARIABLES: Passed securely from GitHub Secrets
-# ----------------------------------------------------------------------
 env:
   SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
   SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
@@ -19,56 +13,58 @@ env:
   SNOWFLAKE_ROLE: ACCOUNTADMIN
   SNOWFLAKE_DATABASE: ABCD_POC_DB
   SNOWFLAKE_WAREHOUSE: W_TRANSFORM_POC
-  DBT_PROFILES_DIR: ABCD
+  DBT_PROFILES_DIR: .
 
 jobs:
   # ====================================================================
-  # JOB 1: CI VALIDATION (Runs ONLY on Pull Requests)
-  # Purpose: Compile code and run tests to catch errors BEFORE merging.
+  # JOB 1: CI VALIDATION (Runs on Pull Requests)
   # ====================================================================
   ci-validation:
-      if: github.event_name == 'pull_request'
-      runs-on: ubuntu-latest
-      steps:
-        - name: Checkout Code from GitHub
-          uses: actions/checkout@v4
-  
-        - name: Set up Python Environment
-          uses: actions/setup-python@v5
-          with:
-            python-version: '3.10'
-  
-        - name: Install dbt-snowflake Adapter
-          run: pip install dbt-snowflake
-  
-        - name: Validate SQL and Test Data Quality
-          run: |
-            cd ABCD
-            dbt deps
-            dbt compile
-            dbt test
-            
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ABCD
+    steps:
+      - name: Checkout Code from GitHub
+        uses: actions/checkout@v4
+
+      - name: Set up Python Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dbt-snowflake Adapter
+        run: pip install dbt-snowflake
+
+      - name: Validate SQL and Test Data Quality
+        run: |
+          dbt deps
+          dbt compile
+          dbt test
+
   # ====================================================================
-  # JOB 2: CD DEPLOYMENT (Runs ONLY on Merge to Main)
-  # Purpose: Build/update tables and views in Snowflake automatically.
+  # JOB 2: CD DEPLOYMENT (Runs on Merge to Main)
   # ====================================================================
   cd-deployment:
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      runs-on: ubuntu-latest
-      steps:
-        - name: Checkout Code from GitHub
-          uses: actions/checkout@v4
-  
-        - name: Set up Python Environment
-          uses: actions/setup-python@v5
-          with:
-            python-version: '3.10'
-  
-        - name: Install dbt-snowflake Adapter
-          run: pip install dbt-snowflake
-  
-        - name: Run dbt Build (Transform & Deploy)
-          run: |
-            cd ABCD
-            dbt deps
-            dbt build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ABCD
+    steps:
+      - name: Checkout Code from GitHub
+        uses: actions/checkout@v4
+
+      - name: Set up Python Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dbt-snowflake Adapter
+        run: pip install dbt-snowflake
+
+      - name: Run dbt Build (Transform & Deploy)
+        run: |
+          dbt deps
+          dbt build

@@ -25,4 +25,4 @@ models:
           - not_null
       - name: dept_name
         data_tests:
-          - not_nullABCD_POC_DB.DBT_DEV_SANDBOX_ABCD_GOLD
+          - not_null

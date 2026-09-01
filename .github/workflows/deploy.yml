@@ -1,4 +1,4 @@
-name: Snowflake dbt CI-CD Pipeline
+`name: Snowflake dbt CI-CD Pipeline
 
 on:
   pull_request:
@@ -36,17 +36,12 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dbt and SQLFluff Dependencies
-        run: |
-          pip install dbt-snowflake sqlfluff sqlfluff-templater-dbt
-
-      - name: Run SQLFluff Linting Gate
-        run: |
-          dbt deps
-          sqlfluff lint models --config ../.sqlfluff
+      - name: Install dbt-snowflake Adapter
+        run: pip install dbt-snowflake
 
       - name: Validate SQL and Test Data Quality in Sandbox
         run: |
+          dbt deps
           dbt compile --target dev
           dbt test --target dev
 

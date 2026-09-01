@@ -1,6 +1,6 @@
 {{ config(schema='ABCD_SILVER', materialized='table') }}
 
-SELECT
+select
     payload:event_id::STRING             AS event_id,
     payload:sample_id::STRING            AS sample_id,
     payload:patient_mrn::STRING          AS patient_mrn,

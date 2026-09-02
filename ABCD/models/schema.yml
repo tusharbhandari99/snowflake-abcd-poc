@@ -1,6 +1,68 @@
 version: 2
 
 models:
+  - name: stg_samples
+    description: "Cleansed staging table from RAW_SAMPLE_INGEST guarded by strict schema contract"
+    config:
+      contract:
+        enforced: true
+    columns:
+      - name: EVENT_ID
+        data_type: varchar
+        description: "Primary key for the sample ingest event"
+        data_tests:
+          - unique
+          - not_null
+
+      - name: SAMPLE_ID
+        data_type: varchar
+        data_tests:
+          - not_null
+
+      - name: PATIENT_MRN
+        data_type: varchar
+        data_tests:
+          - not_null
+
+      - name: PATIENT_ZIP
+        data_type: varchar
+
+      - name: PROVIDER_NPI
+        data_type: varchar
+
+      - name: PROVIDER_NAME
+        data_type: varchar
+
+      - name: QC_STATUS
+        data_type: varchar
+        data_tests:
+          - accepted_values:
+              values: ['PASS', 'FLAGGED', 'FAIL']
+
+      - name: COLLECTED_AT
+        data_type: timestamp_ntz
+
+      - name: ACCESSIONED_AT
+        data_type: timestamp_ntz
+
+      # -------------------------------------------------------------
+      # Columns injected by apply_audit_columns('S3_HEALTHOMICS')
+      # -------------------------------------------------------------
+      - name: _LOADED_AT
+        data_type: timestamp_ltz
+
+      - name: _SOURCE_UPDATED_AT
+        data_type: timestamp_ltz
+
+      - name: _SOURCE_SYSTEM
+        data_type: varchar
+
+      - name: _RECORD_HASH
+        data_type: varchar
+        description: "SHA-256 hash across all row attributes for change detection"
+        data_tests:
+          - not_null
+          
   - name: fct_sample_event
     description: "Accessioning events and turnaround time fact table"
     columns:
@@ -16,13 +78,9 @@ models:
         tests:
           - not_null
 
-  - name: dim_department
-    description: "Hospital department dimension"
+  - name: dim_status
     columns:
-      - name: dept_id
+      - name: status_id
         data_tests:
           - unique
-          - not_null
-      - name: dept_name
-        data_tests:
           - not_null

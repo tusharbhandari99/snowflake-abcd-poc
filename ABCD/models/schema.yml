@@ -15,3 +15,10 @@ models:
       - name: turnaround_time_minutes
         tests:
           - not_null
+
+  - name: dim_status
+    columns:
+      - name: status_id
+        data_tests:
+          - unique
+          - not_null

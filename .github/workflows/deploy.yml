@@ -42,17 +42,70 @@ jobs:
 
       - name: Validate Models, Contracts, and Tests in Sandbox
         id: dbt_dev_build
+        continue-on-error: true
         run: |
           dbt deps
           dbt build --target dev
 
-      - name: Dispatch Snowflake Email Notification on CI Failure
-        if: failure()
+      - name: Dispatch Detailed Snowflake Email Notification on CI Failure
+        if: steps.dbt_dev_build.outcome == 'failure'
         run: |
           python - <<EOF
           import os
+          import json
           import snowflake.connector
 
+          # 1. Parse run_results.json to extract exact dbt contract/test failure details
+          error_details = []
+          run_results_path = "target/run_results.json"
+          
+          if os.path.exists(run_results_path):
+              try:
+                  with open(run_results_path, "r") as f:
+                      data = json.load(f)
+                      for result in data.get("results", []):
+                          if result.get("status") in ("error", "fail"):
+                              node_name = result.get("unique_id", "unknown_node")
+                              msg = result.get("message", "No message provided.")
+                              error_details.append(f"• [{result.get('status').upper()}] {node_name}:\n  {msg}\n")
+              except Exception as e:
+                  error_details.append(f"Error reading run_results.json: {str(e)}")
+
+          # 2. Fallback: Parse dbt.log tail for compilation errors
+          if not error_details:
+              log_path = "logs/dbt.log"
+              if os.path.exists(log_path):
+                  with open(log_path, "r") as f:
+                      lines = f.readlines()
+                      error_lines = [
+                          line.strip() for line in lines[-30:] 
+                          if any(keyword in line for keyword in ["Compilation Error", "Enforced contract", "mismatch", "failed", "Error"])
+                      ]
+                      if error_lines:
+                          error_details.append("\n".join(error_lines))
+
+          failure_summary = "\n".join(error_details) if error_details else "No explicit error extracted. Please inspect the GitHub Actions run logs."
+
+          # 3. Construct the Email Content
+          subject = f"🚨 [CI FAILURE] Schema Drift / Contract Violation on {os.environ.get('GITHUB_HEAD_REF')}"
+          body = f"""Schema drift, contract break, or dbt test failure detected during PR validation!
+
+==================================================
+EXACT ERROR / ROOT CAUSE:
+==================================================
+{failure_summary}
+
+==================================================
+RUN METADATA:
+==================================================
+• Repository: {os.environ.get('GITHUB_REPOSITORY')}
+• Branch: {os.environ.get('GITHUB_HEAD_REF')}
+• Commit SHA: {os.environ.get('GITHUB_SHA')}
+• Triggered By: {os.environ.get('GITHUB_ACTOR')}
+• Run URL: {os.environ.get('GITHUB_SERVER_URL')}/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}
+"""
+
+          # 4. Connect to Snowflake and Send Alert
           conn = snowflake.connector.connect(
               user=os.environ['SNOWFLAKE_USER'],
               password=os.environ['SNOWFLAKE_PASSWORD'],
@@ -63,21 +116,14 @@ jobs:
               schema='ABCD_SILVER'
           )
 
-          subject = "🚨 [CI FAILURE] dbt Validation / Schema Contract Failure"
-          body = f"""Schema drift, contract break, or dbt test failure detected during PR validation!
-
-          Repository: ${{ github.repository }}
-          Pull Request Branch: ${{ github.head_ref }}
-          Commit SHA: ${{ github.sha }}
-          Triggered By: ${{ github.actor }}
-          GitHub Actions Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          """
-
           cursor = conn.cursor()
           cursor.execute("CALL ABCD_POC_DB.ABCD_SILVER.SEND_PIPELINE_EMAIL(%s, %s)", (subject, body))
-          print("Failure email dispatched successfully via Snowflake.")
+          print("Detailed failure email dispatched successfully via Snowflake.")
           cursor.close()
           conn.close()
+
+          # Fail the step so the pull request check remains RED
+          exit(1)
           EOF
 
   # ====================================================================
@@ -107,17 +153,70 @@ jobs:
 
       - name: Run Production dbt Build (Transform & Deploy)
         id: dbt_prod_build
+        continue-on-error: true
         run: |
           dbt deps
           dbt build --target prod
 
-      - name: Dispatch Snowflake Email Notification on CD Failure
-        if: failure()
+      - name: Dispatch Detailed Snowflake Email Notification on CD Failure
+        if: steps.dbt_prod_build.outcome == 'failure'
         run: |
           python - <<EOF
           import os
+          import json
           import snowflake.connector
 
+          # 1. Parse run_results.json
+          error_details = []
+          run_results_path = "target/run_results.json"
+          
+          if os.path.exists(run_results_path):
+              try:
+                  with open(run_results_path, "r") as f:
+                      data = json.load(f)
+                      for result in data.get("results", []):
+                          if result.get("status") in ("error", "fail"):
+                              node_name = result.get("unique_id", "unknown_node")
+                              msg = result.get("message", "No message provided.")
+                              error_details.append(f"• [{result.get('status').upper()}] {node_name}:\n  {msg}\n")
+              except Exception as e:
+                  error_details.append(f"Error reading run_results.json: {str(e)}")
+
+          # 2. Fallback: Parse dbt.log tail
+          if not error_details:
+              log_path = "logs/dbt.log"
+              if os.path.exists(log_path):
+                  with open(log_path, "r") as f:
+                      lines = f.readlines()
+                      error_lines = [
+                          line.strip() for line in lines[-30:] 
+                          if any(keyword in line for keyword in ["Compilation Error", "Enforced contract", "mismatch", "failed", "Error"])
+                      ]
+                      if error_lines:
+                          error_details.append("\n".join(error_lines))
+
+          failure_summary = "\n".join(error_details) if error_details else "No explicit error extracted. Please inspect the GitHub Actions run logs."
+
+          # 3. Construct Email Content
+          subject = "🚨 [PROD FAILURE] Production dbt Build Failed on main"
+          body = f"""Production dbt build failed on main!
+
+==================================================
+EXACT ERROR / ROOT CAUSE:
+==================================================
+{failure_summary}
+
+==================================================
+RUN METADATA:
+==================================================
+• Repository: {os.environ.get('GITHUB_REPOSITORY')}
+• Branch: main
+• Commit SHA: {os.environ.get('GITHUB_SHA')}
+• Triggered By: {os.environ.get('GITHUB_ACTOR')}
+• Run URL: {os.environ.get('GITHUB_SERVER_URL')}/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}
+"""
+
+          # 4. Connect to Snowflake and Send Alert
           conn = snowflake.connector.connect(
               user=os.environ['SNOWFLAKE_USER'],
               password=os.environ['SNOWFLAKE_PASSWORD'],
@@ -128,19 +227,12 @@ jobs:
               schema='ABCD_SILVER'
           )
 
-          subject = "🚨 [PROD FAILURE] dbt Deployment Failed on Main"
-          body = f"""Production dbt build failed on main!
-
-          Repository: ${{ github.repository }}
-          Branch: main
-          Commit SHA: ${{ github.sha }}
-          Triggered By: ${{ github.actor }}
-          GitHub Actions Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          """
-
           cursor = conn.cursor()
           cursor.execute("CALL ABCD_POC_DB.ABCD_SILVER.SEND_PIPELINE_EMAIL(%s, %s)", (subject, body))
-          print("Production failure email dispatched successfully via Snowflake.")
+          print("Detailed production failure email dispatched successfully via Snowflake.")
           cursor.close()
           conn.close()
+
+          # Fail the step so the CD action remains RED
+          exit(1)
           EOF

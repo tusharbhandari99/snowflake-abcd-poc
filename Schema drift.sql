@@ -66,8 +66,8 @@ EXECUTE AS CALLER
 AS
 BEGIN
     CALL SYSTEM$SEND_EMAIL(
-        'email_alert_integration',
-        'your-email@example.com',
+        'schema_drift_email_int',
+        'tushar.bhandari@infojiniconsulting.com',
         :SUBJECT_TEXT,
         :BODY_TEXT
     );

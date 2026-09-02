@@ -47,65 +47,80 @@ jobs:
           dbt deps
           dbt build --target dev
 
-      - name: Dispatch Detailed Snowflake Email Notification on CI Failure
+      - name: Dispatch Snowflake Email Notification on CI Failure
         if: steps.dbt_dev_build.outcome == 'failure'
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_HEAD_REF: ${{ github.head_ref }}
+          GH_SHA: ${{ github.sha }}
+          GH_ACTOR: ${{ github.actor }}
+          GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          python - <<EOF
+          python3 - <<'EOF'
           import os
           import json
           import snowflake.connector
 
-          # 1. Parse run_results.json to extract exact dbt contract/test failure details
-          error_details = []
-          run_results_path = "target/run_results.json"
-          
-          if os.path.exists(run_results_path):
+          # Locate target/run_results.json and logs/dbt.log safely
+          base_dir = os.getcwd()
+          results_path = os.path.join(base_dir, "target", "run_results.json")
+          logs_path = os.path.join(base_dir, "logs", "dbt.log")
+
+          error_lines = []
+
+          # 1. Parse run_results.json
+          if os.path.exists(results_path):
               try:
-                  with open(run_results_path, "r") as f:
+                  with open(results_path, "r", encoding="utf-8") as f:
                       data = json.load(f)
-                      for result in data.get("results", []):
-                          if result.get("status") in ("error", "fail"):
-                              node_name = result.get("unique_id", "unknown_node")
-                              msg = result.get("message", "No message provided.")
-                              error_details.append(f"• [{result.get('status').upper()}] {node_name}:\n  {msg}\n")
+                      for r in data.get("results", []):
+                          if r.get("status") in ("error", "fail"):
+                              model = r.get("unique_id", "Unknown Model")
+                              msg = r.get("message", "No explicit error message returned.")
+                              error_lines.append(f"[{r.get('status').upper()}] {model}\n{msg}\n")
               except Exception as e:
-                  error_details.append(f"Error reading run_results.json: {str(e)}")
+                  error_lines.append(f"Failed to read run_results.json: {str(e)}")
 
           # 2. Fallback: Parse dbt.log tail for compilation errors
-          if not error_details:
-              log_path = "logs/dbt.log"
-              if os.path.exists(log_path):
-                  with open(log_path, "r") as f:
-                      lines = f.readlines()
-                      error_lines = [
-                          line.strip() for line in lines[-30:] 
-                          if any(keyword in line for keyword in ["Compilation Error", "Enforced contract", "mismatch", "failed", "Error"])
+          if not error_lines and os.path.exists(logs_path):
+              try:
+                  with open(logs_path, "r", encoding="utf-8") as f:
+                      lines = [line.strip() for line in f.readlines() if line.strip()]
+                      recent = [
+                          l for l in lines[-40:] 
+                          if any(term in l for term in ["Compilation Error", "enforced contract", "mismatch", "failed", "Failure"])
                       ]
-                      if error_lines:
-                          error_details.append("\n".join(error_lines))
+                      if recent:
+                          error_lines.append("\n".join(recent))
+              except Exception as e:
+                  error_lines.append(f"Failed to read dbt.log: {str(e)}")
 
-          failure_summary = "\n".join(error_details) if error_details else "No explicit error extracted. Please inspect the GitHub Actions run logs."
+          # Default message if both fail to find an error
+          if not error_lines:
+              error_summary = "Build failed, but specific error details could not be parsed. Check GitHub Actions logs."
+          else:
+              error_summary = "\n----------------------------------------\n".join(error_lines)
 
-          # 3. Construct the Email Content
-          subject = f"🚨 [CI FAILURE] Schema Drift / Contract Violation on {os.environ.get('GITHUB_HEAD_REF')}"
-          body = f"""Schema drift, contract break, or dbt test failure detected during PR validation!
+          # Construct Clean Email Message
+          subject = f"[CI FAILED] dbt Schema Validation - {os.environ.get('GH_HEAD_REF')}"
+          
+          body = (
+              "====================================================\n"
+              "DBT PIPELINE EXECUTION FAILURE\n"
+              "====================================================\n\n"
+              "DETAILS & ERROR REASON:\n"
+              f"{error_summary}\n\n"
+              "====================================================\n"
+              "WORKFLOW METADATA:\n"
+              "====================================================\n"
+              f"Repository:   {os.environ.get('GH_REPO')}\n"
+              f"Branch:       {os.environ.get('GH_HEAD_REF')}\n"
+              f"Commit SHA:   {os.environ.get('GH_SHA')}\n"
+              f"Triggered By: {os.environ.get('GH_ACTOR')}\n"
+              f"Action URL:   {os.environ.get('GH_RUN_URL')}\n"
+          )
 
-==================================================
-EXACT ERROR / ROOT CAUSE:
-==================================================
-{failure_summary}
-
-==================================================
-RUN METADATA:
-==================================================
-• Repository: {os.environ.get('GITHUB_REPOSITORY')}
-• Branch: {os.environ.get('GITHUB_HEAD_REF')}
-• Commit SHA: {os.environ.get('GITHUB_SHA')}
-• Triggered By: {os.environ.get('GITHUB_ACTOR')}
-• Run URL: {os.environ.get('GITHUB_SERVER_URL')}/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}
-"""
-
-          # 4. Connect to Snowflake and Send Alert
+          # Connect and Dispatch via Snowflake
           conn = snowflake.connector.connect(
               user=os.environ['SNOWFLAKE_USER'],
               password=os.environ['SNOWFLAKE_PASSWORD'],
@@ -116,13 +131,12 @@ RUN METADATA:
               schema='ABCD_SILVER'
           )
 
-          cursor = conn.cursor()
-          cursor.execute("CALL ABCD_POC_DB.ABCD_SILVER.SEND_PIPELINE_EMAIL(%s, %s)", (subject, body))
-          print("Detailed failure email dispatched successfully via Snowflake.")
-          cursor.close()
+          cur = conn.cursor()
+          cur.execute("CALL ABCD_POC_DB.ABCD_SILVER.SEND_PIPELINE_EMAIL(%s, %s)", (subject, body))
+          cur.close()
           conn.close()
 
-          # Fail the step so the pull request check remains RED
+          print("Failure notification sent.")
           exit(1)
           EOF
 
@@ -158,65 +172,75 @@ RUN METADATA:
           dbt deps
           dbt build --target prod
 
-      - name: Dispatch Detailed Snowflake Email Notification on CD Failure
+      - name: Dispatch Snowflake Email Notification on CD Failure
         if: steps.dbt_prod_build.outcome == 'failure'
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_SHA: ${{ github.sha }}
+          GH_ACTOR: ${{ github.actor }}
+          GH_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          python - <<EOF
+          python3 - <<'EOF'
           import os
           import json
           import snowflake.connector
 
+          base_dir = os.getcwd()
+          results_path = os.path.join(base_dir, "target", "run_results.json")
+          logs_path = os.path.join(base_dir, "logs", "dbt.log")
+
+          error_lines = []
+
           # 1. Parse run_results.json
-          error_details = []
-          run_results_path = "target/run_results.json"
-          
-          if os.path.exists(run_results_path):
+          if os.path.exists(results_path):
               try:
-                  with open(run_results_path, "r") as f:
+                  with open(results_path, "r", encoding="utf-8") as f:
                       data = json.load(f)
-                      for result in data.get("results", []):
-                          if result.get("status") in ("error", "fail"):
-                              node_name = result.get("unique_id", "unknown_node")
-                              msg = result.get("message", "No message provided.")
-                              error_details.append(f"• [{result.get('status').upper()}] {node_name}:\n  {msg}\n")
+                      for r in data.get("results", []):
+                          if r.get("status") in ("error", "fail"):
+                              model = r.get("unique_id", "Unknown Model")
+                              msg = r.get("message", "No explicit error message returned.")
+                              error_lines.append(f"[{r.get('status').upper()}] {model}\n{msg}\n")
               except Exception as e:
-                  error_details.append(f"Error reading run_results.json: {str(e)}")
+                  error_lines.append(f"Failed to read run_results.json: {str(e)}")
 
           # 2. Fallback: Parse dbt.log tail
-          if not error_details:
-              log_path = "logs/dbt.log"
-              if os.path.exists(log_path):
-                  with open(log_path, "r") as f:
-                      lines = f.readlines()
-                      error_lines = [
-                          line.strip() for line in lines[-30:] 
-                          if any(keyword in line for keyword in ["Compilation Error", "Enforced contract", "mismatch", "failed", "Error"])
+          if not error_lines and os.path.exists(logs_path):
+              try:
+                  with open(logs_path, "r", encoding="utf-8") as f:
+                      lines = [line.strip() for line in f.readlines() if line.strip()]
+                      recent = [
+                          l for l in lines[-40:] 
+                          if any(term in l for term in ["Compilation Error", "enforced contract", "mismatch", "failed", "Failure"])
                       ]
-                      if error_lines:
-                          error_details.append("\n".join(error_lines))
+                      if recent:
+                          error_lines.append("\n".join(recent))
+              except Exception as e:
+                  error_lines.append(f"Failed to read dbt.log: {str(e)}")
 
-          failure_summary = "\n".join(error_details) if error_details else "No explicit error extracted. Please inspect the GitHub Actions run logs."
+          if not error_lines:
+              error_summary = "Deployment failed, but specific error details could not be parsed. Check GitHub Actions logs."
+          else:
+              error_summary = "\n----------------------------------------\n".join(error_lines)
 
-          # 3. Construct Email Content
-          subject = "🚨 [PROD FAILURE] Production dbt Build Failed on main"
-          body = f"""Production dbt build failed on main!
+          subject = "[PROD FAILED] dbt Deployment Failed on main"
+          
+          body = (
+              "====================================================\n"
+              "PRODUCTION DBT DEPLOYMENT FAILURE\n"
+              "====================================================\n\n"
+              "DETAILS & ERROR REASON:\n"
+              f"{error_summary}\n\n"
+              "====================================================\n"
+              "WORKFLOW METADATA:\n"
+              "====================================================\n"
+              f"Repository:   {os.environ.get('GH_REPO')}\n"
+              f"Branch:       main\n"
+              f"Commit SHA:   {os.environ.get('GH_SHA')}\n"
+              f"Triggered By: {os.environ.get('GH_ACTOR')}\n"
+              f"Action URL:   {os.environ.get('GH_RUN_URL')}\n"
+          )
 
-==================================================
-EXACT ERROR / ROOT CAUSE:
-==================================================
-{failure_summary}
-
-==================================================
-RUN METADATA:
-==================================================
-• Repository: {os.environ.get('GITHUB_REPOSITORY')}
-• Branch: main
-• Commit SHA: {os.environ.get('GITHUB_SHA')}
-• Triggered By: {os.environ.get('GITHUB_ACTOR')}
-• Run URL: {os.environ.get('GITHUB_SERVER_URL')}/{os.environ.get('GITHUB_REPOSITORY')}/actions/runs/{os.environ.get('GITHUB_RUN_ID')}
-"""
-
-          # 4. Connect to Snowflake and Send Alert
           conn = snowflake.connector.connect(
               user=os.environ['SNOWFLAKE_USER'],
               password=os.environ['SNOWFLAKE_PASSWORD'],
@@ -227,12 +251,11 @@ RUN METADATA:
               schema='ABCD_SILVER'
           )
 
-          cursor = conn.cursor()
-          cursor.execute("CALL ABCD_POC_DB.ABCD_SILVER.SEND_PIPELINE_EMAIL(%s, %s)", (subject, body))
-          print("Detailed production failure email dispatched successfully via Snowflake.")
-          cursor.close()
+          cur = conn.cursor()
+          cur.execute("CALL ABCD_POC_DB.ABCD_SILVER.SEND_PIPELINE_EMAIL(%s, %s)", (subject, body))
+          cur.close()
           conn.close()
 
-          # Fail the step so the CD action remains RED
+          print("Production failure notification sent.")
           exit(1)
           EOF

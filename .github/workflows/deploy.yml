@@ -10,18 +10,20 @@ env:
   SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
   SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
   SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
-  SNOWFLAKE_ROLE: ACCOUNTADMIN
   SNOWFLAKE_DATABASE: ABCD_POC_DB
   SNOWFLAKE_WAREHOUSE: W_TRANSFORM_POC
   DBT_PROFILES_DIR: .
 
 jobs:
   # ====================================================================
-  # JOB 1: CI VALIDATION (Runs on Pull Requests)
+  # JOB 1: CI VALIDATION (Runs on Pull Requests in Dev Sandbox)
   # ====================================================================
   ci-validation:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      DBT_TARGET: dev
+      SNOWFLAKE_ROLE: DBT_DEVELOPER_ROLE
     defaults:
       run:
         working-directory: ABCD
@@ -34,21 +36,59 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dbt-snowflake Adapter
-        run: pip install dbt-snowflake
+      - name: Install dbt and Snowflake Connector
+        run: |
+          pip install dbt-snowflake snowflake-connector-python
 
-      - name: Validate SQL and Test Data Quality
+      - name: Validate Models, Contracts, and Tests in Sandbox
+        id: dbt_dev_build
         run: |
           dbt deps
-          dbt compile
-          dbt test
+          dbt build --target dev
+
+      - name: Dispatch Snowflake Email Notification on CI Failure
+        if: failure()
+        run: |
+          python - <<EOF
+          import os
+          import snowflake.connector
+
+          conn = snowflake.connector.connect(
+              user=os.environ['SNOWFLAKE_USER'],
+              password=os.environ['SNOWFLAKE_PASSWORD'],
+              account=os.environ['SNOWFLAKE_ACCOUNT'],
+              role=os.environ['SNOWFLAKE_ROLE'],
+              warehouse=os.environ['SNOWFLAKE_WAREHOUSE'],
+              database=os.environ['SNOWFLAKE_DATABASE'],
+              schema='ABCD_SILVER'
+          )
+
+          subject = "🚨 [CI FAILURE] dbt Validation / Schema Contract Failure"
+          body = f"""Schema drift, contract break, or dbt test failure detected during PR validation!
+
+          Repository: ${{ github.repository }}
+          Pull Request Branch: ${{ github.head_ref }}
+          Commit SHA: ${{ github.sha }}
+          Triggered By: ${{ github.actor }}
+          GitHub Actions Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          """
+
+          cursor = conn.cursor()
+          cursor.execute("CALL ABCD_POC_DB.ABCD_SILVER.SEND_PIPELINE_EMAIL(%s, %s)", (subject, body))
+          print("Failure email dispatched successfully via Snowflake.")
+          cursor.close()
+          conn.close()
+          EOF
 
   # ====================================================================
-  # JOB 2: CD DEPLOYMENT (Runs on Merge to Main)
+  # JOB 2: CD DEPLOYMENT (Runs on Merge to Main in Production)
   # ====================================================================
   cd-deployment:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    env:
+      DBT_TARGET: prod
+      SNOWFLAKE_ROLE: DBT_CICD_PROD_ROLE
     defaults:
       run:
         working-directory: ABCD
@@ -61,10 +101,46 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dbt-snowflake Adapter
-        run: pip install dbt-snowflake
+      - name: Install dbt and Snowflake Connector
+        run: |
+          pip install dbt-snowflake snowflake-connector-python
 
-      - name: Run dbt Build (Transform & Deploy)
+      - name: Run Production dbt Build (Transform & Deploy)
+        id: dbt_prod_build
         run: |
           dbt deps
-          dbt build
+          dbt build --target prod
+
+      - name: Dispatch Snowflake Email Notification on CD Failure
+        if: failure()
+        run: |
+          python - <<EOF
+          import os
+          import snowflake.connector
+
+          conn = snowflake.connector.connect(
+              user=os.environ['SNOWFLAKE_USER'],
+              password=os.environ['SNOWFLAKE_PASSWORD'],
+              account=os.environ['SNOWFLAKE_ACCOUNT'],
+              role=os.environ['SNOWFLAKE_ROLE'],
+              warehouse=os.environ['SNOWFLAKE_WAREHOUSE'],
+              database=os.environ['SNOWFLAKE_DATABASE'],
+              schema='ABCD_SILVER'
+          )
+
+          subject = "🚨 [PROD FAILURE] dbt Deployment Failed on Main"
+          body = f"""Production dbt build failed on main!
+
+          Repository: ${{ github.repository }}
+          Branch: main
+          Commit SHA: ${{ github.sha }}
+          Triggered By: ${{ github.actor }}
+          GitHub Actions Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          """
+
+          cursor = conn.cursor()
+          cursor.execute("CALL ABCD_POC_DB.ABCD_SILVER.SEND_PIPELINE_EMAIL(%s, %s)", (subject, body))
+          print("Production failure email dispatched successfully via Snowflake.")
+          cursor.close()
+          conn.close()
+          EOF

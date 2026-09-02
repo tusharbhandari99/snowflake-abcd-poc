@@ -1,0 +1,33 @@
+[sqlfluff]
+dialect = snowflake
+templater = dbt
+runaway_limit = 10
+max_line_length = 120
+indent_unit = space
+
+[sqlfluff:indentation]
+tab_space_size = 4
+
+[sqlfluff:templater:dbt]
+project_dir = ./ABCD
+profiles_dir = ./ABCD
+
+# 1. Enforce UPPERCASE SQL keywords (SELECT, FROM, WHERE, JOIN)
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = upper
+
+# 2. Enforce UPPERCASE built-in functions (COUNT, COALESCE, DATEDIFF)
+[sqlfluff:rules:capitalisation.functions]
+capitalisation_policy = upper
+
+# 3. Enforce UPPERCASE identifiers/column aliases
+[sqlfluff:rules:capitalisation.identifiers]
+capitalisation_policy = upper
+
+# 4. Enforce explicit column aliasing using AS (SELECT col AS my_col)
+[sqlfluff:rules:aliasing.column]
+aliasing = explicit
+
+# 5. Enforce explicit table aliasing using AS (FROM table AS t)
+[sqlfluff:rules:aliasing.table]
+aliasing = explicit

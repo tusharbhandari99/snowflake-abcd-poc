@@ -18,7 +18,7 @@ jobs:
   # ====================================================================
   # 1. CI VALIDATION (Runs on any PR targeting dev, uat, or main)
   # ====================================================================
-  ci-quality-gate:
+  ci-validation:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     defaults:

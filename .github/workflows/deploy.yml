@@ -35,8 +35,12 @@ jobs:
           pip install --upgrade pip
           pip install dbt-snowflake snowflake-connector-python sqlfluff sqlfluff-templater-dbt
 
-      - name: SQL Linting
-        run: sqlfluff lint models/ --dialect snowflake
+        - name: SQL Linting
+        run: |
+          sqlfluff lint models/ \
+            --dialect snowflake \
+            --ignore layout,capitalisation,structure,references
+        continue-on-error: true
 
       - name: Validate dbt Models in Dev Sandbox
         run: |

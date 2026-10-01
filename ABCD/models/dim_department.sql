@@ -14,6 +14,6 @@ WITH source_data AS (
 SELECT 
     dept_id,
     dept_name,
-    location,
+    locations,
     CURRENT_TIMESTAMP() AS created_at
 FROM source_data
